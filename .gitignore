@@ -109,3 +109,9 @@ venv.bak/
 
 # test file
 test/
+
+# build
+build/windows
+build/linux
+build/dd.py
+build/dd-icon.ico
