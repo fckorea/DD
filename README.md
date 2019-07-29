@@ -16,7 +16,7 @@ https://github.com/fckorea/Detection-Dog
 >   * --version: show program's version number and exit
 >   * -h, --help: show this help message and exit
 >   * -c &lt;Config file path&gt;, --config=&lt;Config file path&gt;: Set config file path. default: config.conf)
->   * -s, --sub_dir: Set traversal sub directory. default) True
+>   * --no-sub-dir: Set no traversal sub directory. default) Traversal
 >   * -v, --verbose: Set verbose mode. default) False
 
 ## Build
