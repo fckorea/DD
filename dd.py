@@ -44,16 +44,25 @@ def fnProcess(argTarget, argSubDir):
                     break
         
         for check_path in target_list:
-            LOGGER.debug(' * Check file("%s")' % (check_path))
+            LOGGER.info('Check file("%s")' % (check_path))
 
             check_path_ext = os.path.splitext(check_path)[-1].lower()
 
             if check_path_ext in CONFIG['extension']:
                 result = []
-                LOGGER.info(' * Matched extension("%s")' % (check_path_ext))
+                LOGGER.debug(' * Matched extension("%s")' % (check_path_ext))
                 
-                with open(check_path, encoding='UTF8') as read_file:
+                try:
+                    read_file = open(check_path, encoding='UTF8')
                     content = read_file.read()
+                    LOGGER.debug(' * Read UTF-8.')
+                except:
+                    read_file.close()
+                    read_file = open(check_path, 'rb')
+                    content = read_file.read()
+                    LOGGER.debug(' * Cannot read UTF-8, re-read binary.')
+
+                if len(content) > 0:
                     for pattern in CONFIG['pattern']:
                         idx = fnCheck(content, pattern['type'], pattern['data'])
                         if idx > -1:
@@ -65,14 +74,17 @@ def fnProcess(argTarget, argSubDir):
                                 'line': line_at,
                                 'column': column_at
                             })
+                else:
+                    LOGGER.debug(' * No content SKIP!!!')
+                
                 read_file.close()
 
-                LOGGER.info(' * Check result (%s) - Find: %d' % (check_path, len(result)))
+                LOGGER.info('Check result (%s) - Find: %d' % (check_path, len(result)))
                 for res in result:
-                    LOGGER.info(' ** %s(%s):%d, %d' % (check_path, res['data'], res['line'], res['column']))
+                    LOGGER.info(' + %s(%s):%d, %d' % (check_path, res['data'], res['line'], res['column']))
 
     except:
-        LOGGER.debug(' *** Error in path traversal.')
+        LOGGER.error(' *** Error in processing.')
         LOGGER.debug(traceback.format_exc())
 
 def fnCheck(argContent, argCheckType, argCheckValue):
@@ -81,6 +93,8 @@ def fnCheck(argContent, argCheckType, argCheckValue):
     result = False
 
     if argCheckType == 'string':
+        if type(argContent) is bytes:
+            return argContent.find(argCheckValue.encode())
         LOGGER.debug(' * Check string type(%s), value(%s)' % (argCheckType, argCheckValue))
         return argContent.find(argCheckValue)
     elif argCheckType == 'regex':
@@ -90,8 +104,11 @@ def fnCheck(argContent, argCheckType, argCheckValue):
 
 def fnGetFindAt(argContent, argIdx):
     column_count = argIdx
-    line_count = argContent[:argIdx].count('\n') + 1
+    line_count = argContent[:argIdx].count('\n') + 1 if type(argContent) is not bytes else 1
 
+    if type(argContent) is bytes:
+        return (line_count, column_count)
+        
     if line_count > 0:
         before_lines = argContent[:argIdx].split('\n')[:-1]
         column_count -= len('\n'.join(before_lines))
@@ -104,21 +121,21 @@ def fnGetFindAt(argContent, argIdx):
     return (line_count, column_count)
 
 #=============================== Config & Init Function ===============================#
-def fnGetConfig(argOptions):
+def fnGetConfig(argConfigFilePath):
     global LOGGER
     global CONFIG
 
     try:
-        if os.path.isfile(argOptions.o_sConfig):
-            CONFIG = json.loads(open(argOptions.o_sConfig, encoding='UTF8').read())
+        if os.path.isfile(argConfigFilePath):
+            CONFIG = json.loads(open(argConfigFilePath, encoding='UTF8').read())
             CONFIG['extension'] = [ item.lower() if item.startswith('.') else '.' + item.lower() for item in CONFIG['extension'] ]
-            LOGGER.info(' * Read data')
-            LOGGER.info(' * Updated: %s, Count of data: %d, Target extension: %s ' % (CONFIG['updated'], len(CONFIG['pattern']), ', '.join(CONFIG['extension'])))
+            LOGGER.debug(' * Read config data')
+            LOGGER.debug(' * Updated: %s, Count of data: %d, Target extension: %s ' % (CONFIG['updated'], len(CONFIG['pattern']), ', '.join(CONFIG['extension'])))
             return True
         else:
             LOGGER.error(' * Config file not found.')
     except:
-        LOGGER.debug(' *** Error read config file.')
+        LOGGER.error(' *** Error read config file.')
         LOGGER.debug(traceback.format_exc())
     
     return False
@@ -129,20 +146,15 @@ def fnMain(argOptions, argArgs):
     global CONFIG
 
     try:
-        # LOGGER.debug('in fnMain')
+        for target in argArgs:
+            target = os.path.abspath(target)
 
-        if argOptions.o_sTarget is None:
-            LOGGER.info(' * Target is not setted.')
-            return
-
-        if argOptions.o_bVerbose is True:
-            LOGGER.setLevel(logging.DEBUG)
-
-        if os.path.isfile(argOptions.o_sTarget) or os.path.isdir(argOptions.o_sTarget):
-            LOGGER.info(' * Target("%s") is %s.' % (argOptions.o_sTarget, 'file' if os.path.isfile(argOptions.o_sTarget) else ('directory (sub: %s)' % argOptions.o_bSubDir)))
-            fnProcess(argOptions.o_sTarget, argOptions.o_bSubDir)
-        else:
-            LOGGER.info(' * Target("%s") is not found.' % (argOptions.o_sTarget))
+            LOGGER.info('Check target "%s"...' % (target))
+            if os.path.isfile(target) or os.path.isdir(target):
+                LOGGER.info('Target("%s") is %s.' % (target, 'file' if os.path.isfile(target) else ('directory (sub: %s)' % argOptions.o_bSubDir)))
+                fnProcess(target, argOptions.o_bSubDir)
+            else:
+                LOGGER.info('Target("%s") is not found.' % (target))
     except:
         raise
 
@@ -150,37 +162,43 @@ def fnMain(argOptions, argArgs):
 def fnSetOptions():
     global PROG_VER
 
-    l_hParser = None
+    parser = None
 
-    l_lOptions = [
-        { 'Param': ('-c', '--config'), 'action': 'store', 'metavar': '<Config file path>', 'type': 'string', 'dest': 'o_sConfig', 'default': 'config.conf', 'help': 'Set config file path.\t\tdefault) config.conf (contents type is JSON)' },
-        { 'Param': ('-t', '--target'), 'action': 'store', 'metavar': '<Detection target path>', 'type': 'string', 'dest': 'o_sTarget', 'help': 'Set target path.\t\t*Required' },
-        { 'Param': ('-s', '--sub_dir'), 'action': 'store_true', 'metavar': '<Is sub directory>', 'dest': 'o_bSubDir', 'default': False, 'help': 'Set travel sub directory.\tdefault) False' },
+    options = [
+        { 'Param': ('-c', '--config'), 'action': 'store', 'metavar': '<Config file path>', 'type': 'string', 'dest': 'o_sConfigFilePath', 'default': 'config.conf', 'help': 'Set config file path.\t\tdefault) config.conf (contents type is JSON)' },
+        { 'Param': ('', '--no-sub-dir'), 'action': 'store_false', 'metavar': '<No traversal sub directory>', 'dest': 'o_bSubDir', 'default': True, 'help': 'Set no traversal sub directory.\tdefault) Treversal' },
         { 'Param': ('-v', '--verbose'), 'action': 'store_true', 'metavar': '<Verbose Mode>', 'dest': 'o_bVerbose', 'default': False, 'help': 'Set verbose mode.\t\tdefault) False' }
     ]
-    l_sUsage = '%prog [options]\n ex) %prog ...'
+    usage = '%prog [options] <File or Dir path>\n\tex) %prog test\\ test.php\n\tex) %prog -v test.php\n\tex) %prog --no-sub-dir test\\'
 
-    l_hParser = OptionParser(usage = l_sUsage, version = '%prog ' + PROG_VER)
+    parser = OptionParser(usage = usage, version = '%prog ' + PROG_VER)
 
-    for l_dOption in l_lOptions:
-        l_tParam = l_dOption['Param']
-        del l_dOption['Param']
-        l_hParser.add_option(*l_tParam, **l_dOption)
+    for option in options:
+        param = option['Param']
+        del option['Param']
+        parser.add_option(*param, **option)
 
-    return l_hParser
+    return parser
 
 def fnGetOptions(argParser):
-    if(len(sys.argv) == 1):
+    if len(sys.argv) == 1:
+        return argParser.parse_args(['--help'])
+
+    if len(argParser.parse_args()[1]) == 0:
         return argParser.parse_args(['--help'])
 
     return argParser.parse_args()
 
-def fnInit():
+def fnInit(argOptions):
     global LOGGER
     global LOG_FILENAME
 
     LOGGER = logging.getLogger('Detection-Dog')
-    LOGGER.setLevel(logging.INFO)
+
+    if argOptions.o_bVerbose is True:
+        LOGGER.setLevel(logging.DEBUG)
+    else:
+        LOGGER.setLevel(logging.INFO)
 
     formatter = logging.Formatter('[%(levelname)s] - %(filename)s:%(lineno)s\t- %(asctime)s - %(message)s')
     
@@ -197,12 +215,12 @@ def fnInit():
     return True
 
 if __name__ == '__main__':
-    if fnInit():
+    parser = fnSetOptions()
+    (parsed_options, argvs) = fnGetOptions(parser)
+    if fnInit(parsed_options):
         LOGGER.info('Start Detection Dog...')
-
-        l_hParser = fnSetOptions()
-        (l_hOptions, l_vArgs) = fnGetOptions(l_hParser)
-        if fnGetConfig(l_hOptions):
-            fnMain(l_hOptions, l_vArgs)
-
+        if fnGetConfig(parsed_options.o_sConfigFilePath):
+            LOGGER.info('Config file("%s")' % (parsed_options.o_sConfigFilePath))
+            LOGGER.info('Updated: %s, Count of data: %d, Target extension: %s ' % (CONFIG['updated'], len(CONFIG['pattern']), ', '.join(CONFIG['extension'])))
+            fnMain(parsed_options, argvs)
         LOGGER.info('Terminate Detection Dog...')
