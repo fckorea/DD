@@ -269,7 +269,7 @@ def fnSetOptions():
     options = [
         { 'Param': ('-c', '--config'), 'action': 'store', 'metavar': '<Config file path>', 'type': 'string', 'dest': 'o_sConfigFilePath', 'default': 'config.conf', 'help': 'Set config file path.\t\tdefault) config.conf (contents type is JSON)' },
         { 'Param': ('-o', '--output'), 'action': 'store', 'metavar': '<Output file path>', 'type': 'string', 'dest': 'o_sOutputFilePath', 'help': 'Set output file path.' },
-        { 'Param': ('-t', '--output_type'), 'action': 'store', 'metavar': '<Output file type>', 'type': 'string', 'dest': 'o_sOutputType', 'default': 'csv', 'help': 'Set output file type(json, csv, txt).\t\tdefault) csv' },
+        { 'Param': ('-t', '--output_type'), 'action': 'store', 'metavar': '<Output file type>', 'type': 'string', 'dest': 'o_sOutputType', 'default': 'csv', 'help': 'Set output file type(csv, json, txt).\t\tdefault) csv' },
         { 'Param': ('', '--no-sub-dir'), 'action': 'store_false', 'metavar': '<No traversal sub directory>', 'dest': 'o_bSubDir', 'default': True, 'help': 'Set no traversal sub directory.\tdefault) Treversal' },
         { 'Param': ('-v', '--verbose'), 'action': 'store_true', 'metavar': '<Verbose Mode>', 'dest': 'o_bVerbose', 'default': False, 'help': 'Set verbose mode.\t\tdefault) False' }
     ]
