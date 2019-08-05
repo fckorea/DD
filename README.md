@@ -1,5 +1,6 @@
-# Detection-Dog
-https://github.com/fckorea/Detection-Dog
+# DD
+Detection-Dog
+* https://github.com/fckorea/Detection-Dog
 
 ## Description
 ### This python script find files using string or regular expression.
