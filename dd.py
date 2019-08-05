@@ -61,7 +61,10 @@ def fnProcess(argTarget, argSubDir):
                         'check_result': result
                     })
                     for res in result:
-                        LOGGER.info(' + %s(%s):%d, %d' % (check_path, res['data'], res['line'], res['column']))
+                        if res['line'] == 0:
+                            LOGGER.info(' + %s(%s):binary, %d' % (check_path, res['data'], res['column']))
+                        else:
+                            LOGGER.info(' + %s(%s):%d, %d' % (check_path, res['data'], res['line'], res['column']))
 
     except:
         LOGGER.error(' *** Error in processing.')
@@ -99,7 +102,10 @@ def fnCheckFile(argCheckFilePath):
             idx = fnCheckPattern(content, pattern['type'], pattern['data'])
             if idx > -1:
                 (line_at, column_at) = fnGetFindAt(content, idx)
-                LOGGER.debug(' * Matched pattern!!! (%s) - %s:%d, %d' % (pattern['data'], argCheckFilePath, line_at, column_at))
+                if line_at == 0:
+                    LOGGER.debug(' * Matched pattern!!! (%s) - %s:binary, %d' % (pattern['data'], argCheckFilePath, column_at))
+                else:
+                    LOGGER.debug(' * Matched pattern!!! (%s) - %s:%d, %d' % (pattern['data'], argCheckFilePath, line_at, column_at))
                 result.append({
                     'type': pattern['type'],
                     'data': pattern['data'],
@@ -138,10 +144,10 @@ def fnCheckPattern(argContent, argCheckType, argCheckValue):
 
 def fnGetFindAt(argContent, argIdx):
     column_count = argIdx
-    line_count = argContent[:argIdx].count('\n') + 1 if type(argContent) is not bytes else 1
+    line_count = argContent[:argIdx].count('\n') + 1 if type(argContent) is not bytes else 0
 
     if type(argContent) is bytes:
-        return (line_count, column_count)
+        return (line_count, (column_count + 1))
         
     if line_count > 0:
         before_lines = argContent[:argIdx].split('\n')[:-1]
