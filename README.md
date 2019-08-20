@@ -22,6 +22,20 @@ Detection-Dog
 >   * --no-sub-dir: Set no traversal sub directory. default) Traversal
 >   * -v, --verbose: Set verbose mode. default) False
 
+## Make config
+ * json style
+ * required names
+   * updated: string, ex) 2019-08-20
+   * extension: array in string, ex) [ ".php", ".aspx" ]
+   * pattern: array in object
+     * pattern object
+       * type: string, "string"|"regex"|"hex"|"yara"
+       * data: string
+         * string: "passthru"
+         * regex: "^(test|pass)$"
+         * hex: "0F 1F 3C"
+         * yara: "rule test { strings: $string = \\"test\\" wide ascii $string2 = \\"pass\\" condition: $string or $string2 }"
+
 ## Build
 ### for Windows
 * [pyinstaller --onefile dd.py] OR [build\build.bat]

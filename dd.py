@@ -21,6 +21,7 @@ import json
 import csv
 import traceback
 import re
+import yara
 
 PROG_VER = '0.1'
 LOGGER = None
@@ -32,6 +33,7 @@ RESULT = {
     'summary': {},
     'result': []
 }
+YARA_RES_IN_CALLBACK = {}
 
 #=============================== Check Functions ===============================#
 def fnProcess(argTarget, argSubDir):
@@ -86,22 +88,12 @@ def fnGetTargetList(argTarget, argSubDir):
 
 def fnCheckFile(argCheckFilePath):
     result = []
-
-    try:
-        read_file = open(argCheckFilePath, encoding='UTF8')
-        content = read_file.read()
-        LOGGER.debug(' * Read UTF-8.')
-    except:
-        read_file.close()
-        read_file = open(argCheckFilePath, 'rb')
-        content = read_file.read()
-        LOGGER.debug(' * Cannot read UTF-8, re-read binary.')
-
-    if len(content) > 0:
-        for pattern in CONFIG['pattern']:
-            idx = fnCheckPattern(content, pattern['type'], pattern['data'])
-            if idx > -1:
-                (line_at, column_at) = fnGetFindAt(content, idx)
+    
+    for pattern in CONFIG['pattern']:
+        resIdx = fnCheckPattern(argCheckFilePath, pattern['type'].lower(), pattern['data'])
+        if resIdx != -1 and len(resIdx) > 0:
+            for idx in resIdx:
+                (line_at, column_at) = fnGetFindAt(argCheckFilePath, idx[0])
                 if line_at == 0:
                     LOGGER.debug(' * Matched pattern!!! (%s) - %s:binary, %d' % (pattern['data'], argCheckFilePath, column_at))
                 else:
@@ -112,59 +104,100 @@ def fnCheckFile(argCheckFilePath):
                     'line': line_at,
                     'column': column_at
                 })
-    else:
-        LOGGER.debug(' * No content SKIP!!!')
-
-    read_file.close()
 
     return result
 
-def fnCheckPattern(argContent, argCheckType, argCheckValue):
+def yaraCallback(argData):
+    global YARA_RES_IN_CALLBACK
+
+    LOGGER.debug(' * Yara rule result.\t%s', argData)
+    YARA_RES_IN_CALLBACK = argData
+    yara.CALLBACK_CONTINUE
+
+def fnCheckPattern(argCheckFilePath, argCheckType, argCheckValue):
     global LOGGER
 
+    LOGGER.debug(' * Check content type(%s), value(%s)' % (argCheckType, argCheckValue))
+
     if argCheckType == 'string':
-        LOGGER.debug(' * Check string type(%s), value(%s)' % (argCheckType, argCheckValue))
+        # Escape
+        argCheckValue = argCheckValue.replace('"', '\\"')
 
-        if type(argContent) is bytes:
-            LOGGER.debug(' * Check content is bytes.')
-            return argContent.find(argCheckValue.encode())
-        return argContent.find(argCheckValue)
+        yara_string = 'rule str { strings: $str = \"%s\" condition: $str }' % argCheckValue
+        LOGGER.debug(' * Convert string to yara rule.\t%s' % (yara_string))
     elif argCheckType == 'regex':
-        LOGGER.debug(' * Check regex type(%s), value(%s)' % (argCheckType, argCheckValue))
-
         if argCheckValue[0] == '/' and argCheckValue[-1] == '/':
             argCheckValue = argCheckValue[1:-1]
-        regex = re.compile(argCheckValue, re.MULTILINE | re.IGNORECASE)
-        matched = regex.search(argContent)
 
-        if matched is None:
-            return -1
-        else:
-            return matched.span()[0]
+        yara_string = 'rule regex { strings: $regex = /%s/ condition: $regex }' % argCheckValue
+        LOGGER.debug(' * Convert regex to yara rule.\t%s' % (yara_string))
+    elif argCheckType == 'hex':
+        yara_string = 'rule hex { strings: $hex = { %s } condition: $hex }' % argCheckValue
+        LOGGER.debug(' * Convert hex to yara rule.\t%s' % (yara_string))
+    elif argCheckType == 'yara':
+        yara_string = argCheckValue
 
-def fnGetFindAt(argContent, argIdx):
+    try:
+        rules = yara.compile(source=yara_string)
+
+        matches = rules.match(argCheckFilePath, callback=yaraCallback)
+    except:
+        # LOGGER.error(' *** Error execute yara path.')
+        # LOGGER.debug(traceback.format_exc())
+
+        try:
+            content = fnReadFile(argCheckFilePath)
+            matches = rules.match(data=content, callback=yaraCallback)
+        except:
+            LOGGER.error(' *** Error execute yara data.')
+            LOGGER.debug(traceback.format_exc())
+    
+    if len(matches):
+        return YARA_RES_IN_CALLBACK['strings']
+    return []
+
+def fnGetFindAt(argCheckFilePath, argIdx):
     column_count = argIdx
-    line_count = argContent[:argIdx].count('\n') + 1 if type(argContent) is not bytes else 0
 
-    if type(argContent) is bytes:
+    content = fnReadFile(argCheckFilePath)
+
+    line_count = content[:argIdx].count('\n') + 1 if type(content) is not bytes else 0
+
+    if type(content) is bytes:
+        LOGGER.debug(' * Content is bytes.')
         return (line_count, (column_count + 1))
-        
+    
     if line_count > 0:
-        before_lines = argContent[:argIdx].split('\n')[:-1]
+        before_lines = content[:argIdx].split('\n')[:-1]
         column_count -= len('\n'.join(before_lines))
-        if argContent[:argIdx].count('\r') > 0:
-            column_count -= len(before_lines)
         
         if line_count == 1:
             column_count += 1
     
     return (line_count, column_count)
 
+def fnReadFile(argCheckFilePath):
+    content = ''
+
+    try:
+        read_file = open(argCheckFilePath, newline='', encoding='UTF8')
+        content = read_file.read()
+        LOGGER.debug(' * Read UTF-8.')
+    except:
+        read_file.close()
+        read_file = open(argCheckFilePath, 'rb')
+        content = read_file.read()
+        LOGGER.debug(' * Cannot read UTF-8, re-read binary.')
+    finally:
+        read_file.close()
+    
+    return content
+
 #=============================== Output Function ===============================#
 def fnOutputCSV(argOutputPath):
     global RESULT
 
-    with open(argOutputPath, 'w', newline='') as csv_file:
+    with open(argOutputPath, 'w', newline='', encoding='UTF-8') as csv_file:
         csv_writer = csv.writer(csv_file, delimiter='\t', quotechar='|', quoting=csv.QUOTE_MINIMAL)
         
         csv_writer.writerow([ 'Exec:', RESULT['exec'] ])
@@ -192,7 +225,7 @@ def fnOutputJSON(argOutputPath):
 def fnOutputTxt(argOutputPath):
     global RESULT
 
-    with open(argOutputPath, 'w') as txt_file:
+    with open(argOutputPath, 'w', encoding='UTF-8') as txt_file:
         txt_file.write('Exec: %s\n' % (RESULT['exec']))
         txt_file.write('Check extension: %s\n' % (RESULT['check_extension']))
         txt_file.write('Check file count: %d\n' % (RESULT['summary']['target_count']))
