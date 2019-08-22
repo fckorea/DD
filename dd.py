@@ -15,6 +15,7 @@ from optparse import OptionParser
 import os.path
 import logging
 import logging.handlers
+import string
 import datetime
 import time
 import json
@@ -33,6 +34,7 @@ RESULT = {
     'summary': {},
     'result': []
 }
+READ_REASON_LEN = 5
 YARA_RES_IN_CALLBACK = {}
 
 #=============================== Check Functions ===============================#
@@ -44,6 +46,7 @@ def fnProcess(argTarget, argSubDir):
     try:
         target_list = fnGetTargetList(argTarget, argSubDir)
         RESULT['summary']['target_count'] = RESULT['summary']['target_count'] + len(target_list) if 'target_count' in RESULT['summary'] else len(target_list)
+        RESULT['summary']['result_count'] = 0
         
         for check_path in target_list:
             LOGGER.info('Check file("%s")' % (check_path))
@@ -60,13 +63,18 @@ def fnProcess(argTarget, argSubDir):
                 if len(result) > 0:
                     RESULT['result'].append({
                         'path': check_path,
+                        'result_count': len(result),
                         'check_result': result
                     })
+
+                    RESULT['summary']['result_count'] += len(result)
+
                     for res in result:
+                        LOGGER.debug(' * Raw result(%s)' % (res))
                         if res['line'] == 0:
-                            LOGGER.info(' + %s(%s):binary, %d' % (check_path, res['data'], res['column']))
+                            LOGGER.info(' + %s:binary, %d (%s pattern: %s, %s)' % (check_path, res['column'], res['reason'], res['matched'][1], res['matched'][2]))
                         else:
-                            LOGGER.info(' + %s(%s):%d, %d' % (check_path, res['data'], res['line'], res['column']))
+                            LOGGER.info(' + %s:%d, %d (%s pattern: %s, %s)' % (check_path, res['line'], res['column'], res['reason'], res['matched'][1], res['matched'][2]))
 
     except:
         LOGGER.error(' *** Error in processing.')
@@ -90,17 +98,20 @@ def fnCheckFile(argCheckFilePath):
     result = []
     
     for pattern in CONFIG['pattern']:
-        resIdx = fnCheckPattern(argCheckFilePath, pattern['type'].lower(), pattern['data'])
-        if resIdx != -1 and len(resIdx) > 0:
-            for idx in resIdx:
-                (line_at, column_at) = fnGetFindAt(argCheckFilePath, idx[0])
+        matchInfo = fnCheckPattern(argCheckFilePath, pattern['type'].lower(), pattern['data'])
+        if matchInfo != -1 and len(matchInfo) > 0:
+            for match in matchInfo:
+                match = (match[0], match[1], ''.join([ chr(x) if chr(x) in string.printable else '\\x%02x' % x for x in match[2] ]))
+                (line_at, column_at) = fnGetFindAt(argCheckFilePath, match[0])
                 if line_at == 0:
                     LOGGER.debug(' * Matched pattern!!! (%s) - %s:binary, %d' % (pattern['data'], argCheckFilePath, column_at))
                 else:
                     LOGGER.debug(' * Matched pattern!!! (%s) - %s:%d, %d' % (pattern['data'], argCheckFilePath, line_at, column_at))
                 result.append({
                     'type': pattern['type'],
-                    'data': pattern['data'],
+                    'pattern': pattern['data'],
+                    'matched': match,
+                    'reason': fnGetMatchData(argCheckFilePath, match),
                     'line': line_at,
                     'column': column_at
                 })
@@ -156,25 +167,32 @@ def fnCheckPattern(argCheckFilePath, argCheckType, argCheckValue):
         return YARA_RES_IN_CALLBACK['strings']
     return []
 
-def fnGetFindAt(argCheckFilePath, argIdx):
-    column_count = argIdx
+def fnGetFindAt(argCheckFilePath, argMatchAt):
+    column_count = argMatchAt
 
     content = fnReadFile(argCheckFilePath)
 
-    line_count = content[:argIdx].count('\n') + 1 if type(content) is not bytes else 0
+    line_count = content[:argMatchAt].count('\n') + 1 if type(content) is not bytes else 0
 
     if type(content) is bytes:
         LOGGER.debug(' * Content is bytes.')
         return (line_count, (column_count + 1))
     
     if line_count > 0:
-        before_lines = content[:argIdx].split('\n')[:-1]
+        before_lines = content[:argMatchAt].split('\n')[:-1]
         column_count -= len('\n'.join(before_lines))
         
         if line_count == 1:
             column_count += 1
     
     return (line_count, column_count)
+
+def fnGetMatchData(argCheckFilePath, argMatch):
+    global READ_REASON_LEN
+
+    content = fnReadFile(argCheckFilePath)
+
+    return ''.join([ chr(x) if chr(x) in string.printable else '\\x%02x' % x for x in content[(0 if (argMatch[0] - READ_REASON_LEN) < 0 else (argMatch[0] - READ_REASON_LEN)):(None if (argMatch[0] + len(argMatch[2]) + READ_REASON_LEN) > len(content) else (argMatch[0] + len(argMatch[2]) + READ_REASON_LEN))] ]).replace('\n', '\\n').replace('\r', '\\r')
 
 def fnReadFile(argCheckFilePath):
     content = ''
@@ -203,12 +221,16 @@ def fnOutputCSV(argOutputPath):
         csv_writer.writerow([ 'Exec:', RESULT['exec'] ])
         csv_writer.writerow([ 'Check extension:', RESULT['check_extension'] ])
         csv_writer.writerow([ 'Check file count:', RESULT['summary']['target_count']])
+        csv_writer.writerow([ 'Total result count:', RESULT['summary']['result_count']])
         csv_writer.writerow([])
-        csv_writer.writerow([ 'Path', 'Line, Column', 'Match' ])
+        csv_writer.writerow([ 'Path', 'Line, Column', 'Match', 'PatternType', 'Pattern' ])
 
         for res in RESULT['result']:
             for check_res in res['check_result']:
-                csv_writer.writerow([ res['path'], ('%d, %d' % (check_res['line'], check_res['column'])), check_res['data'] ])
+                if check_res['line'] == 0:
+                    csv_writer.writerow([ res['path'], ('binary, %d' % (check_res['column'])), check_res['reason'], check_res['matched'][1], check_res['matched'][2] ])
+                else:
+                    csv_writer.writerow([ res['path'], ('%d, %d' % (check_res['line'], check_res['column'])), check_res['reason'], check_res['matched'][1], check_res['matched'][2] ])
     
     csv_file.close()
     return True
@@ -229,6 +251,7 @@ def fnOutputTxt(argOutputPath):
         txt_file.write('Exec: %s\n' % (RESULT['exec']))
         txt_file.write('Check extension: %s\n' % (RESULT['check_extension']))
         txt_file.write('Check file count: %d\n' % (RESULT['summary']['target_count']))
+        txt_file.write('Total result count: %d\n' % (RESULT['summary']['result_count']))
         txt_file.write('\n')
 
         file_idx = 1
@@ -237,7 +260,10 @@ def fnOutputTxt(argOutputPath):
             txt_file.write('%d. %s (Matched: %d)\n' % (file_idx, res['path'], len(res['check_result'])))
             check_idx = 1
             for check_res in res['check_result']:
-                txt_file.write('\t+ %d. %s - %d, %d\t(pattern: %s)\n' % (check_idx, res['path'], check_res['line'], check_res['column'], check_res['data']))
+                if check_res['line'] == 0:
+                    txt_file.write('\t+ %d. %s:binary, %d\t(pattern: %s, %s)\n' % (check_idx, check_res['reason'], check_res['column'], check_res['matched'][1], check_res['matched'][2]))
+                else:
+                    txt_file.write('\t+ %d. %s:%d, %d\t(pattern: %s, %s)\n' % (check_idx, check_res['reason'], check_res['line'], check_res['column'], check_res['matched'][1], check_res['matched'][2]))
                 check_idx += 1
             file_idx += 1
     return True
